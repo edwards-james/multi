@@ -7,8 +7,9 @@ from skspatial.objects import Vector
 from extremitypathfinder import PolygonEnvironment
 from scipy.spatial import Delaunay
 from joblib import Parallel, delayed
+import torch
 
-OUTPUT_DIR = "/home/james/single"
+OUTPUT_DIR = "/home/je540/multi"
 
 import sys
 import os
@@ -42,9 +43,9 @@ def point_on_heading(point, aircraft_heading, aircraft_speed, time, wind_directi
 
 def shortest_route_path(point1: np.array, point2: np.array, environment: PolygonEnvironment) -> np.array:
     """
-    Find the shortest path from point1 to point2 through the pre-built environment.
+    Find the shortest path from point1 to point2 through the pre-built environment
     """
-    path, _ = environment.find_shortest_path(point1, point2)
+    path, _ = environment.find_shortest_path(tuple(point1), tuple(point2))
     return path
 
 
@@ -123,6 +124,8 @@ def in_hull(p, hull):
 
 
 def make_data(config):
+
+    n_aircraft = config["n_aircraft"]
     
     # list of possible heading options from any point
     heading_options = [i*10 for i in range(1,37)]
@@ -161,8 +164,11 @@ def make_data(config):
 
     # set up polygon environment
     environment = PolygonEnvironment()
-    environment.store(Z_boundary, holes, validate=False) # for dynamic aircraft, this needs to be in the while loop
-
+    environment.store(
+        Z_boundary[:-1],
+        [hole[:-1] for hole in holes],
+        validate=False,
+    )
 
     Z_hull = Delaunay(Z_boundary[:-1])   # drop duplicate closing vertex
     hole_hulls = [Delaunay(np.array(hole[:-1])) for hole in holes]
@@ -181,7 +187,6 @@ def make_data(config):
     if len(shortest_route_path(entry, exit, environment)) == 0:
         return None
 
-
     # set the current position as the sector entry position
     current_pos = entry
 
@@ -192,9 +197,6 @@ def make_data(config):
     headings = [0]
     # log of arrays showing the relative position of all other aircraft at each timestep
     rel_traffic_positions_list = [np.array(traffic_positions) - np.array([current_pos for _ in range(n_aircraft)])]
-
-
-
 
 
     # while the aircraft is further from the exit position than eps, keep selecting new headings
@@ -237,12 +239,10 @@ def make_data(config):
                     deviation_scores.append(-deviation * bias)
                 else:
                     deviation_scores.append(-deviation)
-                
         
         # if there is no move you can make (all deviation_scores are -inf)
         if len(set(deviation_scores)) == 1:
             return None
-
 
         # construct probability distribution for new heading and sample from it
         probs = sp.softmax(np.asarray(deviation_scores)/temperature)
@@ -286,14 +286,13 @@ def make_data(config):
     return trajectory_data
 
 
-
 def make_batch(n, config):
     return [make_data(config) for _ in range(n)]
 
 
-
-
 n_aircraft = config["n_aircraft"]
+
+print("generating data...")
 
 # generate 1000 batches of 1000 trajectories (= 1m)
 batch_size = 1000
@@ -302,6 +301,8 @@ n_batches = 1000
 results_batched = Parallel(n_jobs=-1, return_as="generator")(
     delayed(make_batch)(batch_size, config) for _ in range(n_batches)
 )
+
+print("separating data...")
 
 headings_list, abs_positions_list, targets_list, rel_positions_list, abs_traffic_list, rel_traffic_list = [], [], [], [], [], []
 
@@ -316,6 +317,7 @@ for batch in tqdm(results_batched, total=n_batches):
             rel_traffic_list.append(trajectory["rel_traffic"])
 
 
+print("padding sequences...")
 
 max_length = len(max(headings_list, key=len))
 context_length = 2 ** max_length.bit_length()
@@ -345,6 +347,8 @@ for i in range(len(headings_list)):
     rel_traffic_list[i]   = rel_traffic   + [np.full((n_aircraft, 2), np.inf)] * pos_pad
 
 
+print("saving data...")
+
 with open(f"{OUTPUT_DIR}/data/headings_data.pkl", "wb") as f:
     pickle.dump(np.array(headings_list), f)
 
@@ -362,3 +366,6 @@ with open(f"{OUTPUT_DIR}/data/abs_traffic_data.pkl", "wb") as f:
 
 with open(f"{OUTPUT_DIR}/data/rel_traffic_data.pkl", "wb") as f:
     pickle.dump(np.array(rel_traffic_list), f)
+
+
+print("complete!")

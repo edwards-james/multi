@@ -2,7 +2,7 @@
 config = {
 
     # atc
-    "n_aircraft": 1,
+    "n_aircraft": 3,
     "speed": 10,
     "tt": 0.025,
     "step_dist": 5 * 0.025, # speed * tt
@@ -40,7 +40,6 @@ config = {
     # token id for the sequence padding
     "pad_token_id": 37,
 
-
     # training
 
     #sequences to process in each batch
@@ -50,7 +49,7 @@ config = {
     # steps between loss evaluation
     "eval_interval": 200,
     # max training steps
-    "max_iters": 20_000,
+    "max_iters": 100_000,
     "eval_iters": 200,
 
     # initial and peak learning rates
@@ -62,6 +61,5 @@ config = {
 
     # device
     "device": "cuda" if __import__('torch').cuda.is_available() else "cpu",
-
 
 }

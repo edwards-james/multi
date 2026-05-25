@@ -11,7 +11,7 @@ from src.config import config
 
 device = config["device"]
 
-checkpoint_path = "checkpoints/ckpt_20000.pt"
+checkpoint_path = "checkpoints/ckpt_100000.pt"
 
 
 class HeadingTokeniser:
@@ -138,26 +138,32 @@ entry = np.asarray((-2.5 + eps, 0))
 
 
 
-# # random traffic positions
-# traffic_positions = [
-#     np.array([np.random.uniform(-2.5, 2.5), np.random.uniform(-0.5, 0.5)])
-#     for _ in range(config["n_aircraft"])
-# ]
 
-# traffic at a fixed position
-traffic_positions = [
-    np.array([-1, 0.05])
-    for _ in range(config["n_aircraft"])
-]
+
+
 
 
 # Match the safety radius used to generate the training data in data/gen2.py.
-separation_radius = 0.2
+sep_radius = config["sep_radius"]
 # sector boundaries
 x_lim = 2.5
 y_lim = 0.4
+
+# random traffic positions
+traffic_positions = [
+    np.array([np.random.uniform(-x_lim, x_lim), np.random.uniform(-y_lim, y_lim)])
+    for _ in range(config["n_aircraft"])
+]
+
+# traffic_positions = [
+#     np.array([0, 0])
+#     for _ in range(config["n_aircraft"])
+# ]
+
+print(traffic_positions)
+
 Z_boundary      = np.array(((-x_lim,-y_lim),(x_lim,-y_lim),(x_lim,y_lim),(-x_lim,y_lim),(-x_lim,-y_lim)))
-holes           = [create_disc(tp, separation_radius) for tp in traffic_positions]
+holes           = [create_disc(tp, sep_radius) for tp in traffic_positions]
 hole_boundaries = [np.array(hole) for hole in holes]
 
 
@@ -206,8 +212,8 @@ for _ in tqdm(range(100)):
 
 
 ax.plot(Z_boundary[:, 0], Z_boundary[:, 1], "-k")
-# for hole_boundary in hole_boundaries:
-#     ax.plot(hole_boundary[:, 0], hole_boundary[:, 1], "-k")
+for hole_boundary in hole_boundaries:
+    ax.plot(hole_boundary[:, 0], hole_boundary[:, 1], "-k", alpha=0.3)
 
 ax.scatter(
     np.array(traffic_positions)[:, 0],

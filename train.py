@@ -6,7 +6,6 @@ import torch
 import torch.nn.functional as F
 # from tqdm import tqdm
 
-
 from src.config import config
 from src.model import Model
 from src.utils import save_checkpoint
@@ -16,7 +15,7 @@ torch.manual_seed(1)
 
 
 
-OUTPUT_DIR = "/home/james/single"
+OUTPUT_DIR = "/home/james/multi"
 
 # load the data
 with open(f"{OUTPUT_DIR}/data/headings_data.pkl", "rb") as f:
@@ -35,9 +34,10 @@ for key, value in replace_dict.items():
     rel_positions_data[rel_positions_data == key] = value
     rel_traffic_data[rel_traffic_data == key] = value
 
+# print(rel_traffic_data.shape)
 
-# rel_traffic_data = rel_traffic_data.reshape(len(headings_data), config["context_length"]+1, 2*config["n_aircraft"])
-rel_traffic_data = rel_traffic_data.squeeze(axis=2)
+rel_traffic_data = rel_traffic_data.reshape(len(headings_data), config["context_length"]+1, 2*config["n_aircraft"])
+# rel_traffic_data = rel_traffic_data.squeeze(axis=2)
 
 print(f"headings_data: {headings_data.shape}")
 print(f"rel_positions_data: {rel_positions_data.shape}")

@@ -7,7 +7,7 @@ from skspatial.objects import Vector
 from extremitypathfinder import PolygonEnvironment
 from scipy.spatial import Delaunay, ConvexHull
 from joblib import Parallel, delayed
-from shapely.geometry import Polygon
+from shapely.geometry import Polygon, Point
 from shapely.ops import unary_union
 import torch
 
@@ -20,6 +20,60 @@ import os
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 from src.config import config
+
+# geometry constants (true for every trajectory)
+
+# sector bounaries 
+x_lim, y_lim = 2.5, 0.4
+_eps = 1e-8
+exit  = np.asarray((x_lim - _eps, 0.0))
+entry = np.asarray((-x_lim + _eps, 0.0))
+Z_boundary = np.array((
+    (-x_lim, -y_lim), (x_lim, -y_lim),
+    (x_lim,  y_lim ), (-x_lim, y_lim),
+    (-x_lim, -y_lim),
+))
+
+# config-derived constants
+
+# timesteps
+tt             = config["tt"]
+# aircraft speed
+speed          = config["speed"]
+# safe area around each aircraft
+sep_radius     = config["sep_radius"]
+sep_radius_sq  = sep_radius ** 2
+exit_eps       = 0.5 * speed * tt
+exit_eps_sq    = exit_eps ** 2
+
+
+# ------------ geometry ------------
+
+
+def create_disc(centre, radius):
+    centre_x, centre_y = centre[0], centre[1]
+    angles = np.linspace(0, 2 * np.pi, 21)
+    coords = np.stack([
+        centre_x + radius * np.cos(angles),
+        centre_y + radius * np.sin(angles),
+    ], axis=1)
+    return coords[::-1]    # reversed, closed (first == last)
+
+
+def in_sector(p):
+    return (
+        (abs(p[0]) <= x_lim and abs(p[1]) <= y_lim)
+        or ((p[0] - exit[0])**2 + (p[1] - exit[1])**2 <= exit_eps_sq)
+    )
+
+
+def in_any_hole(p, traffic_arr):
+    diff = traffic_arr - p
+    return ((diff * diff).sum(1) <= sep_radius_sq).any()
+
+
+
+# ------------ other ------------
 
 
 def point_on_heading(point, aircraft_heading, aircraft_speed, time, wind_direction=0, wind_speed=0):
@@ -109,14 +163,7 @@ def doIntersectPolygon(segment: list[np.ndarray], polygon: np.ndarray) -> bool:
     return False
 
 
-def create_disc(centre, radius):
-    centre_x, centre_y = centre[0], centre[1]
-    angles = np.linspace(0, 2 * np.pi, 21)
-    coords = np.stack([
-        centre_x + radius * np.cos(angles),
-        centre_y + radius * np.sin(angles),
-    ], axis=1)
-    return coords[::-1]    # reversed, closed (first == last)
+
 
 
 def in_hull(p, hull):
@@ -125,114 +172,110 @@ def in_hull(p, hull):
     return hull.find_simplex(p) >= 0
 
 
+
+def in_region(p, polygon):
+    return polygon.covers(Point(p))
+
+
+
+
+
+def in_sector(p):
+    return (
+        (abs(p[0]) <= x_lim and abs(p[1]) <= y_lim)
+        or ((p[0] - exit[0])**2 + (p[1] - exit[1])**2 <= exit_eps_sq)
+    )
+
+
+
+
+
+
+# ------------ generate data ------------
+
+
+
 def _make_data(config):
 
-    n_aircraft = config["n_aircraft"]
-    
+    n_aircraft     = config["n_aircraft"]
+    wind_direction = config["wind_direction"]
+    wind_speed     = config["wind_speed"]
+    temperature    = config["temperature"]          # temperature scaling for heading sampling
+    bias           = config["bias"]                 # bias towards continuing present heading
+
     # list of possible heading options from any point
     heading_options = [i*10 for i in range(1,37)]
-    # time between ticks
-    tt = config["tt"]
-    # aircraft speed
-    speed = config["speed"]
-    # wind direction
-    wind_direction = config["wind_direction"]
-    # wind speed
-    wind_speed = config["wind_speed"]
-    # tolerance for reaching exit position, dependent on speed
-    # set to half the distance travelled in 1 time step (without wind)
-    exit_eps = 0.5 * speed * tt
-    # temperature scaling for heading sampling
-    temperature = config["temperature"]
-    # bias towards continuing present heading
-    bias = config["bias"]
-    # safe area around each aircraft
-    sep_radius = config["sep_radius"]
-
-    # sector boundaries
-    x_lim = 2.5
-    y_lim = 0.4
-
-    eps = 1e-8
-    exit = np.asarray((2.5-eps, 0))
-    entry = np.asarray((-2.5+eps, 0))
-
-    # rectangular boundary
-    Z_boundary = np.array(((-x_lim,-y_lim),(x_lim,-y_lim),(x_lim,y_lim),(-x_lim,y_lim),(-x_lim,-y_lim)))
 
     # generate a list of n_aircraft traffic positions and make discs around them
-    traffic_positions = [np.array([np.random.uniform(-x_lim,x_lim),np.random.uniform(-y_lim,y_lim)]) for _ in range(n_aircraft)]
-    holes = [create_disc(traffic_pos, sep_radius) for traffic_pos in traffic_positions]
+    traffic_positions = np.random.uniform(
+        low=[-x_lim, -y_lim], high=[x_lim, y_lim], size=(n_aircraft, 2)
+    )
+    traffic_arr = traffic_positions
+    holes = [create_disc(pos, sep_radius) for pos in traffic_positions]
+
 
     # create a numpy array for the exit region, use to create a hull for the sector including the exit region
     # - this allows the final point in the trajectory to be outside of the sector, but inside the exit circle
-    exit_circle = create_disc(exit, exit_eps)
-    union = unary_union([Polygon(Z_boundary), Polygon(exit_circle)])
-    Z_boundary_union = np.array(union.exterior.coords)   # closed loop
+    exit_circle      = create_disc(exit, exit_eps)
+    sector_union     = unary_union([Polygon(Z_boundary), Polygon(exit_circle)])
+    Z_boundary_union = np.array(sector_union.exterior.coords)
 
     environment = PolygonEnvironment()
     environment.store(
-        # drop closing duplicate
         Z_boundary_union[:-1],
         [hole[:-1] for hole in holes],
         validate=False,
     )
 
-    Z_hull = Delaunay(Z_boundary_union[:-1])
-    hole_hulls = [Delaunay(np.array(hole[:-1])) for hole in holes]
-
-    # check whether the start or finish positions are in any of the holes
-    # if you are starting or finishing in a hole, don't accept this - return None
-    start_in_hole = [in_hull(entry, hull) for hull in hole_hulls]
-    finish_in_hole = [in_hull(exit, hull) for hull in hole_hulls]
-    if any(start_in_hole):
+    # discard if entry/exit are inside a hole, or no path exists at all
+    if in_any_hole(entry, traffic_arr):
         return None
-
-    if any(finish_in_hole):
+    if in_any_hole(exit, traffic_arr):
         return None
-
-    # confirm that there is a possible path through the sector
     if len(shortest_route_path(entry, exit, environment)) == 0:
         return None
+    
 
-    # set the current position as the sector entry position
+    # initialise the trajectory
     current_pos = entry
-
-    # make a log of the aircraft positions for the entire trajectory
-    positions = [current_pos]
-
-    # make a log of the headings followed
-    headings = [0]
-    # log of arrays showing the relative position of all other aircraft at each timestep
-    rel_traffic_positions_list = [np.array(traffic_positions) - np.array([current_pos for _ in range(n_aircraft)])]
+    positions   = [current_pos]
+    headings    = [0]
+    rel_traffic_positions_list = [traffic_arr - current_pos]
 
 
     # while the aircraft is further from the exit position than eps, keep selecting new headings
     while np.linalg.norm(current_pos - exit) > exit_eps:
 
+        # shortest path to the exit from the current position
+        path = np.array(shortest_route_path(current_pos, exit, environment))
+        if len(path) < 2:
+            return None
+        
+        # vector in direction of shortest path
+        a = path[1] - path[0]
+
         # list of the negative deviations from shortest track
         deviation_scores = []
 
-        # along shortest route vector
-        path = np.array(shortest_route_path(current_pos, exit, environment))
-        a = path[1] - path[0]
-        
         # for each possible heading, find the end position and compute the distance to the exit
         for heading in heading_options:
 
             # find the position that would be reached on the given heading
-            next_pos = point_on_heading(current_pos, heading, speed, tt, wind_direction, wind_speed)
+            next_pos = point_on_heading(
+                current_pos, heading, speed, tt, wind_direction, wind_speed
+                )
             # the line segment followed if the proposed heading is taken up
             seg = [current_pos, next_pos]
 
             # if the proposed heading will end you out of the sector
-            if not in_hull(next_pos, Z_hull):
+            if not in_sector(next_pos):
                 deviation_scores.append(-math.inf)
             # if the proposed heading will end you in any of the holes
-            elif any(in_hull(next_pos, hull) for hull in hole_hulls):
+            elif in_any_hole(next_pos, traffic_arr):
                 deviation_scores.append(-math.inf)
             # if the proposed heading will lead to the trajectory intersecting a hole or sector boundary
-            elif any(doIntersectPolygon(seg, hole) for hole in holes) or doIntersectPolygon(seg, Z_boundary_union):
+            elif (any(doIntersectPolygon(seg, hole) for hole in holes)
+                  or doIntersectPolygon(seg, Z_boundary_union)):
                 deviation_scores.append(-math.inf)
             # otherwise this is a valid heading to take up, so compute the correct deviation score
             else:
@@ -249,40 +292,35 @@ def _make_data(config):
                     deviation_scores.append(-deviation)
         
         # if there is no move you can make (all deviation_scores are -inf)
-        if len(set(deviation_scores)) == 1:
+        if not np.isfinite(deviation_scores).any():
             return None
 
         # construct probability distribution for new heading and sample from it
-        probs = sp.softmax(np.asarray(deviation_scores)/temperature)
+        probs = sp.softmax(np.asarray(deviation_scores) / temperature)
         selected_heading = np.random.choice(heading_options, p=probs)
         headings.append(selected_heading)
 
         # update the current position based on following that heading for step_dist
-        current_pos = point_on_heading(current_pos, selected_heading, speed, tt, wind_direction, wind_speed)
+        current_pos = point_on_heading(
+            current_pos, selected_heading, speed, tt, wind_direction, wind_speed
+        )
         positions.append(current_pos)
-
-        rel_traffic_positions = np.array(traffic_positions) - np.array([current_pos for _ in range(n_aircraft)])
-        rel_traffic_positions_list.append(rel_traffic_positions)
+        rel_traffic_positions_list.append(traffic_arr - current_pos)
 
         # if the sequence will end up being longer than the context length for the model, return None
         if len(headings)>30:
             return None
 
 
-    heading_tokens = headings.copy()
-    heading_tokens.append(0)
+    # package tokens
+    heading_tokens     = headings + [0]
+    position_tokens    = positions
+    target_tokens      = [exit] * len(position_tokens)
+    rel_pos_tokens     = list(np.asarray(target_tokens) - np.asarray(position_tokens))
+    abs_traffic_tokens = [traffic_arr] * len(position_tokens)
+    rel_traffic_tokens = rel_traffic_positions_list
 
-    position_tokens = positions.copy()
-
-    target_tokens = [exit for _ in range(len(position_tokens))]
-
-    rel_pos_tokens = list(np.array(target_tokens) - np.array(position_tokens))
-
-    abs_traffic_tokens = [np.array(traffic_positions) for _ in range(len(position_tokens))]
-
-    rel_traffic_tokens = rel_traffic_positions_list.copy()
-
-    trajectory_data = {
+    return {
         "headings" : heading_tokens,
         "abs_positions" : position_tokens,
         "targets" : target_tokens,
@@ -290,8 +328,6 @@ def _make_data(config):
         "abs_traffic" : abs_traffic_tokens,
         "rel_traffic" : rel_traffic_tokens
     }
-
-    return trajectory_data
 
 
 
@@ -304,6 +340,7 @@ def _make_data(config):
 
 
 def make_batch(n, config):
+    # change to make_data!
     return [_make_data(config) for _ in range(n)]
 
 
@@ -312,8 +349,8 @@ n_aircraft = config["n_aircraft"]
 print("generating data...")
 
 # generate 1000 batches of 1000 trajectories (= 1m)
-batch_size = 1000
-n_batches = 1000
+batch_size = 10
+n_batches = 20
 
 results_batched = Parallel(n_jobs=-1, return_as="generator")(
     delayed(make_batch)(batch_size, config) for _ in range(n_batches)

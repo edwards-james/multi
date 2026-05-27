@@ -10,7 +10,7 @@ from joblib import Parallel, delayed
 import torch
 import matplotlib.pyplot as plt
 
-OUTPUT_DIR = "/home/james/multi"
+OUTPUT_DIR = "/home/je540/multi"
 
 import sys
 import os

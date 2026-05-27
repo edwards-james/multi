@@ -131,16 +131,8 @@ def generate(model, config, headx, posx, trafx, abs_traff):
 
 
 eps   = 1e-8
-exit  = np.asarray((2.5 - eps, 0))
+exit  = np.asarray((2 - eps, 0.4-eps))
 entry = np.asarray((-2.5 + eps, 0))
-
-
-
-
-
-
-
-
 
 
 # Match the safety radius used to generate the training data in data/gen2.py.

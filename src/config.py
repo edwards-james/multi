@@ -17,7 +17,6 @@ config = {
     # bias towards continuing present heading
     "bias": 0.5,
 
-
     # model 
 
     # vocab_size = number of possible headings, plus ss token and pad token
@@ -60,6 +59,6 @@ config = {
     "save_dir": "checkpoints",
 
     # device
-    "device": "cuda" if __import__('torch').cuda.is_available() else "cpu",
+    "device": "cuda" if __import__("torch").cuda.is_available() else "cpu",
 
 }

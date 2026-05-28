@@ -14,7 +14,6 @@ from src.utils import save_checkpoint
 torch.manual_seed(1)
 
 
-
 OUTPUT_DIR = "/home/james/multi"
 
 # load the data
@@ -27,14 +26,11 @@ with open(f"{OUTPUT_DIR}/data/rel_positions_data.pkl", "rb") as f:
 with open(f"{OUTPUT_DIR}/data/rel_traffic_data.pkl", "rb") as f:
     rel_traffic_data = pickle.load(f)
 
-
-# # replace the inf values with 0
-# replace_dict = {np.inf: 0}
-# for key, value in replace_dict.items():
-#     rel_positions_data[rel_positions_data == key] = value
-#     rel_traffic_data[rel_traffic_data == key] = value
-
-# print(rel_traffic_data.shape)
+# replace the inf values with 0
+replace_dict = {np.inf: 0}
+for key, value in replace_dict.items():
+    rel_positions_data[rel_positions_data == key] = value
+    rel_traffic_data[rel_traffic_data == key] = value
 
 rel_traffic_data = rel_traffic_data.reshape(len(headings_data), config["context_length"]+1, 2*config["n_aircraft"])
 # rel_traffic_data = rel_traffic_data.squeeze(axis=2)
@@ -151,9 +147,6 @@ def estimate_loss():
     model.train()
 
     return out
-
-
-
 
 
 
